@@ -2,9 +2,15 @@
 
 set -ue
 
-# Variables for image size
 IMG_WIDTH=1920
 IMG_HEIGHT=1080
+RENDER_MOV=false
+COPY_PNG=true
+
+if [ "$COPY_PNG" = true ]; then
+    echo "Removing all .png files in the current directory..."
+    find . -type f -name "*.png" -exec rm -f {} \;  
+fi
 
 if [ -z "$(docker --version)" ]; then
 	echo "Docker is not installed. Please install docker before running this script."
@@ -25,6 +31,9 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
 
     filename=$(basename "$file" ".stl")
     dirname=$(dirname "$file")
+    gif_path="${dirname}/${filename}.gif"
+    mov_path="${dirname}/${filename}.mov"
+
     echo "Reading $file"
     MYTMPDIR="$(mktemp -d)"
     trap 'rm -rf -- "$MYTMPDIR"' EXIT
@@ -85,19 +94,30 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
         cp lib/hsvtorgb.scad "$HOME/Documents/OpenSCAD/libraries/hsvtorgb.scad"
     fi
 
+    # @see https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Other_Language_Features#Viewport:_$vpr,_$vpt,_$vpf_and_$vpd
     $openscad_path /dev/null \
-        -D 'use <hsvtorgb.scad>;' \
         -D '$vpr = [0, 60, 360 * $t];' \
+        -D '$vpd = 1000;' \
+        -D '$vpf = 10;' \
         -o "${MYTMPDIR}/foo.png"  \
         -D "color([68/255, 127/255, 244/255]) import(\"${MYTMPDIR}/foo-centered.stl\");" \
         --imgsize=${IMG_WIDTH},${IMG_HEIGHT} \
-        --camera '0,0,0,0,0,360 * $t,10' \
-        --animate 120 \
+        --projection=perspective \
         --viewall \
-        --autocenter \
+        --camera '0,0,0,0,0,360 * $t,0' \
+        --animate 60 \
         --preview \
-        --colorscheme "Tomorrow Night" \
+        --colorscheme "Starnight" \
         --quiet
+
+    if [ "$COPY_PNG" = true ]; then
+        echo ""
+        echo "Copying .PNG frames to host folder"
+        echo "=================================="
+        find ${MYTMPDIR} -type f -name "*.png" -print0 | while read -d '' -r png_file; do 
+            cp "${png_file}" "${dirname}/"
+        done
+    fi
     
     echo ""
     echo "Copying .png files to docker volume"
@@ -106,23 +126,34 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
     done
 
     echo ""
+    echo "Deleting existing GIF if it exists"
+    if [ -f "$gif_path" ]; then
+        rm -f "$gif_path"
+    fi
+
     echo "Converting ${filename} .PNG files into .GIF and rotating 90° to the right"
     echo "==========================================="
     docker run --rm \
         -v stl2gif-input:/input \
         -v stl2gif-output:/output \
-        linuxserver/ffmpeg:version-4.4-cli -y -framerate 15 -pattern_type glob -i 'input/*.png' -r 25 -vf "scale=2024:-1,transpose=1" "/output/${filename}.gif";
-    # docker cp "${OUTPUT_ID}:/output/${filename}.gif" "${dirname}/${filename}.gif"
+        linuxserver/ffmpeg:version-4.4-cli -y -framerate 15 -pattern_type glob -i 'input/*.png' -r 25 -vf "scale=2048:-1,transpose=1" "/output/${filename}.gif";
+    docker cp "${OUTPUT_ID}:/output/${filename}.gif" "${gif_path}"
 
-    echo ""
-    echo "Converting ${filename} .GIF to .MOV"
-    echo "==================================="
-    docker run --rm \
-        -v stl2gif-input:/input \
-        -v stl2gif-output:/output \
-        linuxserver/ffmpeg:version-4.4-cli -y -i "/output/${filename}.gif" -movflags faststart -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -pix_fmt yuv420p "/output/${filename}.mov";
-    docker cp "${OUTPUT_ID}:/output/${filename}.mov" "${dirname}/${filename}.mov"
+    if [ "$RENDER_MOV" = true ]; then
+        echo ""
+        echo "Deleting existing MOV if it exists"
+        if [ -f "$mov_path" ]; then
+            rm -f "$mov_path"
+        fi
 
+        echo "Converting ${filename} .GIF to .MOV"
+        echo "==================================="
+        docker run --rm \
+            -v stl2gif-input:/input \
+            -v stl2gif-output:/output \
+            linuxserver/ffmpeg:version-4.4-cli -y -i "/output/${filename}.gif" -movflags faststart -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -pix_fmt yuv420p "/output/${filename}.mov";
+        docker cp "${OUTPUT_ID}:/output/${filename}.mov" "${mov_path}"
+    fi
 
     ls "${MYTMPDIR}"
     echo ""
