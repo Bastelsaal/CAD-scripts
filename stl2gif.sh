@@ -196,5 +196,13 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
     echo ""
     echo "Cleaning up temp directory ${MYTMPDIR}"
     echo "======================================"
-    rm -rf --
+    rm -rf -- "${MYTMPDIR}"
+
+    # Clean up Docker containers and volumes
+    echo "Cleaning up Docker containers and volumes"
+    docker rm $INPUT_ID
+    docker rm $OUTPUT_ID
+    docker volume rm ${INPUT_VOLUME}
+    docker volume rm ${OUTPUT_VOLUME}
+
 done
