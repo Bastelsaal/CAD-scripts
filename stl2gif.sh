@@ -7,6 +7,16 @@ IMG_WIDTH=1920
 IMG_HEIGHT=1080
 RENDER_MOV=true
 COPY_PNG=false
+DEBUG_MODE=false  # Default value for debug mode
+
+# Check for command line arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --debug) DEBUG_MODE=true ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
 
 if [ "$COPY_PNG" = true ]; then
     echo "Removing all .png files in the current directory..."
@@ -22,7 +32,17 @@ docker pull spuder/stl2origin:latest
 docker pull linuxserver/ffmpeg:version-4.4-cli
 docker pull openscad/openscad:2021.01
 
+# Counter to limit to a single STL file if DEBUG_MODE is enabled
+file_counter=0
+
 find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do 
+
+    # In DEBUG_MODE, process only the first STL file
+    if [ "$DEBUG_MODE" = true ] && [ "$file_counter" -ge 1 ]; then
+        echo "DEBUG_MODE is enabled, skipping additional files."
+        break
+    fi
+    file_counter=$((file_counter + 1))
 
     filename=$(basename "$file" ".stl")
     dirname=$(dirname "$file")
@@ -176,12 +196,5 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
     echo ""
     echo "Cleaning up temp directory ${MYTMPDIR}"
     echo "======================================"
-    rm -rf -- "${MYTMPDIR}"
-
-    # Remove docker volumes after processing
-    docker rm $INPUT_ID
-    docker rm $OUTPUT_ID
-    docker volume rm ${INPUT_VOLUME}
-    docker volume rm ${OUTPUT_VOLUME}
-
+    rm -rf --
 done
