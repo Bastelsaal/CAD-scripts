@@ -7,6 +7,7 @@ IMG_WIDTH=1920
 IMG_HEIGHT=1080
 RENDER_MOV=true
 COPY_PNG=false
+KEEP_GIF=false  # Default value for keeping the GIF
 DEBUG_MODE=false  # Default value for debug mode
 VERBOSE=false  # Default value for verbose mode
 START_TIME=$(date +%s)  # Track the start time of the script
@@ -88,6 +89,7 @@ while [[ "$#" -gt 0 ]]; do
     case $1 in
         --debug) DEBUG_MODE=true ;;
         --verbose) VERBOSE=true ;;
+        --keep-gif) KEEP_GIF=true ;;  # New option to keep the GIF
         *) handle_error "Unknown parameter passed: $1" ;;
     esac
     shift
@@ -235,6 +237,12 @@ for file in "${stl_files[@]}"; do
         linuxserver/ffmpeg:version-4.4-cli -i "/output/${filename}.gif" -vf "select='lte(n\,60)',setpts=N/FRAME_RATE/TB" -r 30 "/output/${filename}_cropped.gif" > /dev/null 2>&1 || handle_error "Error cropping GIF"
 
     docker cp "${OUTPUT_ID}:/output/${filename}_cropped.gif" "${gif_path}" || handle_error "Error copying cropped GIF"
+
+    # If GIF is not to be kept, delete it
+    if [ "$KEEP_GIF" = false ]; then
+        log "Deleting GIF file ${gif_path}" $file_counter $total_files
+        rm -f "$gif_path" || handle_error "Error deleting GIF file"
+    fi
 
     if [ "$RENDER_MOV" = true ]; then
         log "Converting ${filename} .GIF to .MOV" $file_counter $total_files
