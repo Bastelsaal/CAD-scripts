@@ -22,12 +22,6 @@ docker pull spuder/stl2origin:latest
 docker pull linuxserver/ffmpeg:version-4.4-cli
 docker pull openscad/openscad:2021.01
 
-echo "Creating temporary docker volumes stl2gif-input and stl2gif-output"
-docker volume create --name stl2gif-input
-INPUT_ID=$(docker run -d -v stl2gif-input:/input busybox true)
-docker volume create --name stl2gif-output
-OUTPUT_ID=$(docker run -d -v stl2gif-output:/output busybox true)
-
 find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do 
 
     filename=$(basename "$file" ".stl")
@@ -43,7 +37,17 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
     trap 'rm -rf -- "$MYTMPDIR"' EXIT
     echo "Creating temp directory ${MYTMPDIR}"
 
-    echo "Copying ${filename}.stl to stl2gif-input docker volume"
+    # Create unique docker volumes for each file
+    INPUT_VOLUME="stl2gif-input-${filename}"
+    OUTPUT_VOLUME="stl2gif-output-${filename}"
+
+    echo "Creating temporary docker volumes ${INPUT_VOLUME} and ${OUTPUT_VOLUME}"
+    docker volume create --name ${INPUT_VOLUME}
+    INPUT_ID=$(docker run -d -v ${INPUT_VOLUME}:/input busybox true)
+    docker volume create --name ${OUTPUT_VOLUME}
+    OUTPUT_ID=$(docker run -d -v ${OUTPUT_VOLUME}:/output busybox true)
+
+    echo "Copying ${filename}.stl to ${INPUT_VOLUME} docker volume"
 	docker cp "${dirname}/${filename}.stl" "${INPUT_ID}:/input/${filename}.stl"
 
     echo ""
@@ -54,8 +58,8 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
     docker run \
         -e OUTPUT_STDOUT=true \
         -e OUTPUT_BASH_FILE=/output/foo.sh \
-        -v stl2gif-input:/input \
-        -v stl2gif-output:/output \
+        -v ${INPUT_VOLUME}:/input \
+        -v ${OUTPUT_VOLUME}:/output \
         --rm spuder/stl2origin:latest \
         "/input/${filename}.stl"
 
@@ -70,8 +74,8 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
     echo "======================================================"
     docker run \
         --rm \
-        -v stl2gif-input:/input \
-        -v stl2gif-output:/output \
+        -v ${INPUT_VOLUME}:/input \
+        -v ${OUTPUT_VOLUME}:/output \
         openscad/openscad:2021.01 openscad /dev/null -D "translate([$XTRANS-$XMID,$YTRANS-$YMID,$ZTRANS-$ZMID])import(\"/input/${filename}.stl\");" -o "/output/${RANDOM_FILENAME}-centered.stl"
     docker cp "${OUTPUT_ID}:/output/${RANDOM_FILENAME}-centered.stl" "${MYTMPDIR}/${RANDOM_FILENAME}-centered.stl"
 
@@ -140,16 +144,15 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
     echo "Converting ${filename} .PNG files into .GIF and rotating 90° to the right"
     echo "==========================================="
     docker run --rm \
-        -v stl2gif-input:/input \
-        -v stl2gif-output:/output \
-        linuxserver/ffmpeg:version-4.4-cli -y -framerate 60 -pattern_type glob -i 'input/*.png' -vf "scale=512:-1,transpose=1" "/output/${filename}.gif";
+        -v ${INPUT_VOLUME}:/input \
+        -v ${OUTPUT_VOLUME}:/output \
+        linuxserver/ffmpeg:version-4.4-cli -y -framerate 60 -pattern_type glob -i 'input/*.png' -vf "scale=1024:-1,transpose=1" "/output/${filename}.gif";
         
 
     # Crop the GIF to 60 frames
     docker run --rm \
-        -v stl2gif-output:/output \
+        -v ${OUTPUT_VOLUME}:/output \
         linuxserver/ffmpeg:version-4.4-cli -i "/output/${filename}.gif" -vf "select='lte(n\,60)',setpts=N/FRAME_RATE/TB" -r 30 "/output/${filename}_cropped.gif"
-
 
     docker cp "${OUTPUT_ID}:/output/${filename}_cropped.gif" "${gif_path}"
 
@@ -163,8 +166,8 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
         echo "Converting ${filename} .GIF to .MOV"
         echo "==================================="
         docker run --rm \
-            -v stl2gif-input:/input \
-            -v stl2gif-output:/output \
+            -v ${INPUT_VOLUME}:/input \
+            -v ${OUTPUT_VOLUME}:/output \
             linuxserver/ffmpeg:version-4.4-cli -y -i "/output/${filename}_cropped.gif" -movflags faststart -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -pix_fmt yuv420p "/output/${filename}.mov";
         docker cp "${OUTPUT_ID}:/output/${filename}.mov" "${mov_path}"
     fi
@@ -174,9 +177,11 @@ find ~+ -type f -name "*.stl" -print0 | while read -d '' -r file; do
     echo "Cleaning up temp directory ${MYTMPDIR}"
     echo "======================================"
     rm -rf -- "${MYTMPDIR}"
-done
 
-docker rm $INPUT_ID
-docker rm $OUTPUT_ID
-docker volume rm stl2gif-input
-docker volume rm stl2gif-output
+    # Remove docker volumes after processing
+    docker rm $INPUT_ID
+    docker rm $OUTPUT_ID
+    docker volume rm ${INPUT_VOLUME}
+    docker volume rm ${OUTPUT_VOLUME}
+
+done
